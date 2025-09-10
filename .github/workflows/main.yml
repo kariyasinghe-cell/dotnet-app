@@ -13,12 +13,12 @@ on:
           - production
 
   push:
-    branches:
-      - 'release/*'
-      - 'feature/stg-cd-integration'
-      - 'feature/api-automation'
-    tags:
-      - 'v*.*.*'
+    # branches:
+    #   - 'release/*'
+    #   - 'feature/stg-cd-integration'
+    #   - 'feature/api-automation'
+    # tags:
+    #   - 'v*.*.*'
 
 jobs:
 

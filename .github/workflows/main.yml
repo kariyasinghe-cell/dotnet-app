@@ -130,7 +130,7 @@ jobs:
 
   prepare-workspace:
     name: Prepare Build Workspace
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     outputs:
       workspace-path: ${{ steps.define_workspace.outputs.workspace }}
 

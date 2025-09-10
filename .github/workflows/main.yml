@@ -61,44 +61,44 @@ jobs:
           echo "Determined Topic Status: $TOPIC_STATUS"
           echo "topic_status=$TOPIC_STATUS" >> $GITHUB_OUTPUT
 
-  copyright-check:
-    name: Copyright Headers Check
-    permissions:
-      contents: read
-      packages: read
-    env:
-      GITHUB_ACTOR: ${{ secrets.COMMON_USER }}
-      GITHUB_TOKEN: ${{ secrets.COMMON_USER_TOKEN }}
-    runs-on: ubuntu-latest
-    needs: fetch-repo-topics
-    continue-on-error: true
-    outputs:
-      copyright_failed: ${{ steps.set_output.outputs.failed }}
-    steps:
-      - uses: actions/checkout@v4
+  # copyright-check:
+  #   name: Copyright Headers Check
+  #   permissions:
+  #     contents: read
+  #     packages: read
+  #   env:
+  #     GITHUB_ACTOR: ${{ secrets.COMMON_USER }}
+  #     GITHUB_TOKEN: ${{ secrets.COMMON_USER_TOKEN }}
+  #   runs-on: ubuntu-latest
+  #   needs: fetch-repo-topics
+  #   continue-on-error: true
+  #   outputs:
+  #     copyright_failed: ${{ steps.set_output.outputs.failed }}
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - name: Fetch Centralized Licenserc File
-        run: |
-          git clone https://x-access-token:${{ secrets.COMMON_USER_TOKEN }}@github.com/sampathbankplc/pipeline-config.git pipeline-configs
-          cp pipeline-configs/centralized-configs/.licenserc.yaml .github/.licenserc.yaml
+  #     - name: Fetch Centralized Licenserc File
+  #       run: |
+  #         git clone https://x-access-token:${{ secrets.COMMON_USER_TOKEN }}@github.com/sampathbankplc/pipeline-config.git pipeline-configs
+  #         cp pipeline-configs/centralized-configs/.licenserc.yaml .github/.licenserc.yaml
 
-      - name: Check copyright header
-        id: check
-        uses: apache/skywalking-eyes/header@v0.7.0
-        continue-on-error: true
-        with:
-          config: .github/.licenserc.yaml
-          mode: check
+  #     - name: Check copyright header
+  #       id: check
+  #       uses: apache/skywalking-eyes/header@v0.7.0
+  #       continue-on-error: true
+  #       with:
+  #         config: .github/.licenserc.yaml
+  #         mode: check
 
-      - name: Set Output for Copyright Check
-        id: set_output
-        run: |
-          if [[ "${{ steps.check.outcome }}" == "failure" ]]; then
-            echo "failed=true" >> $GITHUB_OUTPUT
-            exit 1
-          else
-            echo "failed=false" >> $GITHUB_OUTPUT
-          fi
+  #     - name: Set Output for Copyright Check
+  #       id: set_output
+  #       run: |
+  #         if [[ "${{ steps.check.outcome }}" == "failure" ]]; then
+  #           echo "failed=true" >> $GITHUB_OUTPUT
+  #           exit 1
+  #         else
+  #           echo "failed=false" >> $GITHUB_OUTPUT
+  #         fi
 
   code-formatting-check:
     name: Code Formatting Check

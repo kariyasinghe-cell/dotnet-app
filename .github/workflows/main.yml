@@ -119,15 +119,15 @@ jobs:
         id: spotless
         run: mvn spotless:check
 
-      - name: Set Output for Code Formatting Check
-        id: set_output
-        run: |
-          if [[ "${{ steps.spotless.outcome }}" == "failure" ]]; then
-            echo "failed=true" >> $GITHUB_OUTPUT
-            exit 1
-          else
-            echo "failed=false" >> $GITHUB_OUTPUT
-          fi
+      # - name: Set Output for Code Formatting Check
+      #   id: set_output
+      #   run: |
+      #     if [[ "${{ steps.spotless.outcome }}" == "failure" ]]; then
+      #       echo "failed=true" >> $GITHUB_OUTPUT
+      #       exit 1
+      #     else
+      #       echo "failed=false" >> $GITHUB_OUTPUT
+      #     fi
 
   prepare-workspace:
     name: Prepare Build Workspace

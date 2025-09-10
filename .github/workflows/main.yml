@@ -11,13 +11,14 @@ on:
         options:
           - staging
           - production
- push:
-   branches:
-     - 'release/*'
-     - 'feature/stg-cd-integration'
-     - 'feature/api-automation'
-   tags:
-     - 'v*.*.*'
+
+  push:
+    branches:
+      - 'release/*'
+      - 'feature/stg-cd-integration'
+      - 'feature/api-automation'
+    tags:
+      - 'v*.*.*'
 
 jobs:
 

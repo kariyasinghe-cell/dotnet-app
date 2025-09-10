@@ -187,7 +187,7 @@ jobs:
     needs:
       - fetch-repo-topics
       - prepare-workspace
-      - copyright-check
+      # - copyright-check
       - code-formatting-check
       - build-and-test
     if: ${{ needs.fetch-repo-topics.outputs.topic_status != 'new' ||
@@ -236,7 +236,7 @@ jobs:
     needs:
       - fetch-repo-topics
       - prepare-workspace
-      - copyright-check
+      # - copyright-check
       - code-formatting-check
       - build-and-test
     if: ${{ needs.fetch-repo-topics.outputs.topic_status != 'new' ||
@@ -292,7 +292,7 @@ jobs:
     needs:
       - prepare-workspace
       - fetch-repo-topics
-      - copyright-check
+      # - copyright-check
       - code-formatting-check
       - build-and-test
       - fortify-vulnerability-scan

@@ -175,7 +175,7 @@ jobs:
           dotnet --version
 
       - name: Build, Test and Generate Coverage
-        working-directory: ${{ env.WORKSPACE }}
+        working-directory: ${{ github.WORKSPACE }}
         env:
           http_proxy: http://192.168.5.60:8080
           https_proxy: http://192.168.5.60:8080

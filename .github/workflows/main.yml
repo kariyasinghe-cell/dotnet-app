@@ -173,6 +173,8 @@ jobs:
         working-directory: ${{ github.WORKSPACE }}
         run: |
           dotnet --version
+          pwd
+          ls
 
       - name: Build, Test and Generate Coverage
         working-directory: /home/runner/work/dotnet-app/WebApplication1/
@@ -180,7 +182,10 @@ jobs:
           http_proxy: http://192.168.5.60:8080
           https_proxy: http://192.168.5.60:8080
         run: |
-          pwd
+          dotnet clean
+          dotnet restore --no-cache
+          dotnet build --no-restore --configuration Release
+          dotnet test --no-build --configuration Release --collect:"XPlat Code Coverage"
           
   sonarqube-quality-gate-check:
     name: SonarQube Quality Check

@@ -170,7 +170,7 @@ jobs:
           dotnet-version: '9.0.305'
 
       - name: Verify dotnet Version
-        working-directory: ${{ env.WORKSPACE }}
+        working-directory: ${{ github.WORKSPACE }}
         run: |
           dotnet --version
 

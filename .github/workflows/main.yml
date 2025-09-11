@@ -175,7 +175,7 @@ jobs:
           dotnet --version
 
       - name: Build, Test and Generate Coverage
-        working-directory: ${{ github.WORKSPACE }}/WebApplication1/
+        working-directory: /home/runner/work/dotnet-app/WebApplication1/
         env:
           http_proxy: http://192.168.5.60:8080
           https_proxy: http://192.168.5.60:8080

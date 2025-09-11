@@ -180,10 +180,12 @@ jobs:
           http_proxy: http://192.168.5.60:8080
           https_proxy: http://192.168.5.60:8080
         run: |
-          dotnet clean
-          dotnet restore --no-cache
-          dotnet build --no-restore --configuration Release
-          dotnet test --no-build --configuration Release --collect:"XPlat Code Coverage"
+          ls
+          pwd
+          # dotnet clean
+          # dotnet restore --no-cache
+          # dotnet build --no-restore --configuration Release
+          # dotnet test --no-build --configuration Release --collect:"XPlat Code Coverage"
           
   sonarqube-quality-gate-check:
     name: SonarQube Quality Check

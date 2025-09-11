@@ -174,7 +174,7 @@ jobs:
         run: |
           dotnet --version
           pwd
-          ls
+          ls -a /home/runner/work/dotnet-app/dotnet-app/
 
       - name: Build, Test and Generate Coverage
         working-directory: /home/runner/work/dotnet-app/WebApplication1/

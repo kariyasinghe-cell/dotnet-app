@@ -140,10 +140,10 @@ jobs:
       - name: Define Workspace
         id: define_workspace
         run: |
-          WORKSPACE="${{ github.workspace }}/${{ github.run_id }}-ci"
-          mkdir -p "$WORKSPACE"
-          echo "workspace=$WORKSPACE" >> $GITHUB_OUTPUT
-          echo "WORKSPACE=$WORKSPACE" >> $GITHUB_ENV
+          New-Item -ItemType Directory -Force -Path "$env:WORKSPACE" | Out-Null
+          echo "workspace=$env:WORKSPACE" >> $env:GITHUB_OUTPUT
+          echo "WORKSPACE=$env:WORKSPACE" >> $env:GITHUB_ENV
+        shell: pwsh
 
       - name: Checkout Code
         uses: actions/checkout@v4

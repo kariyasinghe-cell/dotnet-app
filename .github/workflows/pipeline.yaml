@@ -184,7 +184,7 @@ jobs:
 
   sonarqube-quality-gate-check:
     name: SonarQube Quality Check
-    runs-on: [ self-hosted, linux ]
+    runs-on: windows
     needs:
       - fetch-repo-topics
       - prepare-workspace
@@ -327,7 +327,7 @@ jobs:
 
   artifact-processing:
     name: "Artifact Packaging"
-    runs-on: [ self-hosted, linux ]
+    runs-on: windows
     needs:
       - prepare-workspace
       - sonarqube-quality-gate-check
@@ -599,7 +599,7 @@ jobs:
     
   cleanup-workspace:
     name: Cleanup Workspace
-    runs-on: [ self-hosted, linux ]
+    runs-on: windows
     needs:
       - prepare-workspace
       - build-and-test

@@ -185,6 +185,7 @@ jobs:
           http_proxy: http://192.168.5.60:8080
           https_proxy: http://192.168.5.60:8080
         run: |
+          Get-Location
           dotnet clean
           dotnet restore --no-cache
           dotnet build --no-restore --configuration Release

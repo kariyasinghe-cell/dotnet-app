@@ -132,7 +132,7 @@ jobs:
 
   prepare-workspace:
     name: Prepare Build Workspace
-    runs-on: [self-hosted, linux]
+    runs-on: windows
     outputs:
       workspace-path: ${{ steps.define_workspace.outputs.workspace }}
 
@@ -154,7 +154,7 @@ jobs:
 
   build-and-test:
     name: Build and Test
-    runs-on: [self-hosted, linux]
+    runs-on: windows
     needs: prepare-workspace
     env:
       WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace-path }}
@@ -232,7 +232,7 @@ jobs:
 
   opensource-license-scan:
     name: Opensource License Scan
-    runs-on: [self-hosted, linux]
+    runs-on: windows
     needs:
       - fetch-repo-topics
       - prepare-workspace
@@ -470,7 +470,7 @@ jobs:
 
   deploy:
     name: "Deploy Application"
-    runs-on: [self-hosted, linux]
+    runs-on: windows
     needs:
       - prepare-workspace
       - artifact-processing
@@ -512,7 +512,7 @@ jobs:
 
   post-deployment-verify:
     name: Post Deployment Verification
-    runs-on: [self-hosted, linux]
+    runs-on: windows
     needs:
       - deploy
       - pre-deploy-notify

@@ -1,0 +1,619 @@
+name: Developer Env - CI Deployment Pipeline
+
+on:
+  push:
+    branches:
+      - main
+    secrets:
+      DEV_SCRIPT_MANAGER_USER:
+        required: true
+      DEV_SCRIPT_MANAGER_PASSWORD:
+        required: true
+      DEV_TOMCAT_HOST:
+        required: true
+      TEAMS_WEBHOOK_URL:
+        required: true
+      COMMON_USER:
+        required: true
+      COMMON_USER_TOKEN:
+        required: true
+      SONAR_QUBE_TOKEN:
+        required: true
+      
+jobs:
+
+  fetch-repo-topics:
+    name: Fetch Repository Topics
+    runs-on: ubuntu-latest
+    outputs:
+      topic_status: ${{ steps.check_topics.outputs.topic_status }}
+    steps:
+
+      - name: Debug API Response
+        run: |
+          RESPONSE=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/topics \
+            -H "Accept: application/vnd.github.mercy-preview+json")
+          echo "API Response: $RESPONSE"
+
+      - name: Fetch Repository Topics
+        id: check_topics
+        run: |
+          RESPONSE=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/topics \
+            -H "Accept: application/vnd.github.mercy-preview+json")
+          echo "API Response: $RESPONSE"
+
+          REPO_TOPICS=$(echo "$RESPONSE" | jq -r '.names | join(" ")')
+          echo "Repository Topics: $REPO_TOPICS"
+
+          TOPIC_STATUS="new"
+          if [[ "$REPO_TOPICS" == *"active"* ]]; then
+            TOPIC_STATUS="active"
+          elif [[ "$REPO_TOPICS" == *"maintenance"* ]]; then
+            TOPIC_STATUS="maintenance"
+          elif [[ "$REPO_TOPICS" == *"deprecated"* ]]; then
+            TOPIC_STATUS="deprecated"
+          elif [[ "$REPO_TOPICS" == *"decommissioned"* ]]; then
+            TOPIC_STATUS="decommissioned"
+          fi
+
+          echo "Determined Topic Status: $TOPIC_STATUS"
+          echo "topic_status=$TOPIC_STATUS" >> $GITHUB_OUTPUT
+
+  copyright-check:
+    name: Copyright Headers Check
+    permissions:
+      contents: read
+      packages: read
+    env:
+      GITHUB_ACTOR: ${{ secrets.COMMON_USER }}
+      GITHUB_TOKEN: ${{ secrets.COMMON_USER_TOKEN }}
+    runs-on: ubuntu-latest
+    needs: fetch-repo-topics
+    continue-on-error: true
+    outputs:
+      copyright_failed: ${{ steps.set_output.outputs.failed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Centralized Licenserc File
+        run: |
+          git clone https://x-access-token:${{ secrets.COMMON_USER_TOKEN }}@github.com/sampathbankplc/pipeline-config.git pipeline-configs
+          cp pipeline-configs/centralized-configs/.licenserc.yaml .github/.licenserc.yaml
+
+      - name: Check copyright header
+        id: check
+        uses: apache/skywalking-eyes/header@v0.7.0
+        continue-on-error: true
+        with:
+          config: .github/.licenserc.yaml
+          mode: check
+
+      - name: Set Output for Copyright Check
+        id: set_output
+        run: |
+          if [[ "${{ steps.check.outcome }}" == "failure" ]]; then
+            echo "failed=true" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "failed=false" >> $GITHUB_OUTPUT
+          fi
+
+  code-formatting-check:
+    name: Code Formatting Check
+    runs-on: ubuntu-latest
+    needs: fetch-repo-topics
+    continue-on-error: true
+    outputs:
+      formatting_failed: ${{ steps.set_output.outputs.failed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v3
+        with:
+          distribution: 'adopt'
+          java-version: '17'
+
+      - name: Run Spotless Check
+        continue-on-error: true
+        id: spotless
+        run: mvn spotless:check
+
+      - name: Set Output for Code Formatting Check
+        id: set_output
+        run: |
+          if [[ "${{ steps.spotless.outcome }}" == "failure" ]]; then
+            echo "failed=true" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "failed=false" >> $GITHUB_OUTPUT
+          fi
+
+
+  prepare-workspace:
+    name: Prepare Build Workspace
+    runs-on: [self-hosted, linux]
+    outputs:
+      workspace-path: ${{ steps.define_workspace.outputs.workspace }}
+
+    steps:
+      - name: Define Workspace
+        id: define_workspace
+        run: |
+          WORKSPACE="${{ github.workspace }}/${{ github.run_id }}-ci"
+          mkdir -p "$WORKSPACE"
+          echo "workspace=$WORKSPACE" >> $GITHUB_OUTPUT
+          echo "WORKSPACE=$WORKSPACE" >> $GITHUB_ENV
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          path: ${{ env.WORKSPACE }}
+          fetch-depth: 0
+
+  build-and-test:
+    name: Build and Test
+    runs-on: [self-hosted, linux]
+    needs: prepare-workspace
+    env:
+      WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace-path }}
+
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+
+      - name: Verify Java Version
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          java -version
+
+      - name: Build, Test and Generate Coverage
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          mvn -B clean verify \
+            -Dmaven.war.skip=true \
+            -Dspring-boot.repackage.skip=true \
+            -Dhttp.proxyHost=192.168.5.60 \
+            -Dhttp.proxyPort=8080 \
+            -Dhttps.proxyHost=192.168.5.60 \
+            -Dhttps.proxyPort=8080
+
+  sonarqube-quality-gate-check:
+    name: SonarQube Quality Check
+    runs-on: [ self-hosted, linux ]
+    needs:
+      - fetch-repo-topics
+      - prepare-workspace
+      - copyright-check
+      - code-formatting-check
+      - build-and-test
+    if: ${{ needs.fetch-repo-topics.outputs.topic_status != 'new' ||
+      (needs.fetch-repo-topics.outputs.topic_status == 'new' &&
+      needs.copyright-check.outputs.copyright_failed == 'false' &&
+      needs.code-formatting-check.outputs.formatting_failed == 'false') }}
+
+    env:
+        WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace-path }}
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+      - name: Verify Java Version for Sonar
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          java -version
+  
+      - name: SonarQube Scan - Quality Gate Check
+        working-directory: ${{ env.WORKSPACE }}
+        run: |  
+          REPO_NAME=$(basename $GITHUB_REPOSITORY)
+          SONAR_PROJECT_KEY="$REPO_NAME"
+          echo "Using Sonar project key: $SONAR_PROJECT_KEY"
+  
+          mvn sonar:sonar -X \
+            -Dsonar.host.url=http://192.168.129.211:9999 \
+            -Dsonar.token=${{ secrets.SONAR_QUBE_TOKEN }} \
+            -Dhttp.proxyHost=192.168.5.60 -Dhttp.proxyPort=8080 \
+            -Dhttps.proxyHost=192.168.5.60 -Dhttps.proxyPort=8080 \
+            -Dhttp.nonProxyHosts="localhost|127.0.0.1|192.168.129.211" \
+            -Dhttps.nonProxyHosts="localhost|127.0.0.1|192.168.129.211" \
+            -Dsonar.projectKey=$SONAR_PROJECT_KEY \
+            -Dsonar.projectName=$SONAR_PROJECT_KEY \
+            -Dsonar.projectVersion=${{ github.sha }} \
+            -Dsonar.scm.provider=git \
+            -Dsonar.scm.forceReloadAll=true \
+            -Dsonar.qualitygate.wait=true
+
+  opensource-license-scan:
+    name: Opensource License Scan
+    runs-on: [self-hosted, linux]
+    needs:
+      - fetch-repo-topics
+      - prepare-workspace
+      - copyright-check
+      - code-formatting-check
+      - build-and-test
+    if: ${{ needs.fetch-repo-topics.outputs.topic_status != 'new' ||
+      (needs.fetch-repo-topics.outputs.topic_status == 'new' &&
+      needs.copyright-check.outputs.copyright_failed == 'false' &&
+      needs.code-formatting-check.outputs.formatting_failed == 'false') }}
+    env:
+      WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace-path }}
+      
+    steps:
+      - name: Prepare Dependency Metadata for License Scan
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          mvn dependency:copy-dependencies \
+            -DoutputDirectory=target/dependency-jars \
+            -Dhttp.proxyHost=192.168.5.60 \
+            -Dhttp.proxyPort=8080 \
+            -Dhttps.proxyHost=192.168.5.60 \
+            -Dhttps.proxyPort=8080
+      
+          mkdir -p target/flat-poms
+      
+          for jar in target/dependency-jars/*.jar; do
+            JAR_BASENAME=$(basename "$jar" .jar)
+            unzip -p "$jar" 'META-INF/maven/*/pom.xml' > "target/flat-poms/${JAR_BASENAME}.pom.xml" 2>/dev/null || true
+          done
+
+          ls -l target/flat-poms
+          find target/flat-poms -name "*.pom.xml"
+
+      - name: Open Source License Scanning - ScanCode
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          source "/home/sampath_admin/actions-runner/_work/scancode-toolkit-v32.3.3/venv/bin/activate"
+          unset SCANCODE_DEBUG
+          unset SCANCODE_DEBUG_STRICT
+      
+          OUTPUT_JSON="scancode-results.json"
+      
+          scancode "${{ env.WORKSPACE }}" \
+            --license \
+            --classify \
+            --license-clarity-score \
+            --license-text \
+            --license-references \
+            --package \
+            --strip-root \
+            --only-findings \
+            --processes -1 \
+            --filter-clues \
+            --json-pp "$OUTPUT_JSON" \
+            -v
+            
+          echo "ScanCode results saved to $OUTPUT_JSON"
+
+      - name: License Scan Result Processing
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          jq '(.files[] | select(.path | startswith("target/flat-poms/") and endswith(".pom.xml"))).path |= (
+                 split("/") | last | sub("\\.pom\\.xml$"; ".jar")
+              )' scancode-results.json > scancode-results-processed.json
+
+      - name: Upload Scan Artifacts
+        env:
+          SCANCODE_REPO: "sampathbankplc/scancode-scan-results"
+          SCANCODE_REPO_BRANCH: main
+          GITHUB_TOKEN: ${{ secrets.COMMON_USER_TOKEN }}
+          REPO_NAME: ${{ github.repository }}
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          REPO_NAME_ONLY=$(echo "$REPO_NAME" | cut -d'/' -f2)
+          FILENAME="${REPO_NAME_ONLY}.json"
+      
+          git clone --branch $SCANCODE_REPO_BRANCH https://x-access-token:$GITHUB_TOKEN@github.com/$SCANCODE_REPO.git results-repo
+      
+          cp "scancode-results-processed.json" "results-repo/$FILENAME"
+      
+          mkdir -p results-repo/original
+          cp "scancode-results.json" "results-repo/original/$FILENAME"
+      
+          cd results-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$FILENAME"
+          git add "original/$FILENAME"
+          git commit -m "Updated $REPO_NAME_ONLY" || echo "No changes to commit"
+          git push origin "$SCANCODE_REPO_BRANCH"
+
+  artifact-processing:
+    name: "Artifact Packaging"
+    runs-on: [ self-hosted, linux ]
+    needs:
+      - prepare-workspace
+      - sonarqube-quality-gate-check
+      - opensource-license-scan
+    env:
+      WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace-path }}
+
+    steps:
+      - name: Artifact Packaging
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          mvn -B clean package -DskipTests \
+            -Dhttp.proxyHost=192.168.5.60 \
+            -Dhttp.proxyPort=8080 \
+            -Dhttps.proxyHost=192.168.5.60 \
+            -Dhttps.proxyPort=8080
+
+      - name: Artifact Publishing
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          echo "No artifacts to publish"
+
+  pre-deploy-notify:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-workspace
+      - fetch-repo-topics
+      - copyright-check
+      - code-formatting-check
+      - build-and-test
+      - sonarqube-quality-gate-check
+      - opensource-license-scan
+      - artifact-processing
+    if: always()
+    env:
+      TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+
+    steps:
+      - name: Notify Deployment Status
+        run: |
+          set -euo pipefail
+          TITLE=""
+          COLOR=""
+          PASSED_JOBS=""
+          FAILED_JOBS=""
+          SKIPPED_JOBS=""
+          OPTIONAL_FAILED_JOBS=""
+
+          prettify() {
+            sed -E 's/([a-z])([A-Z])/\1 \2/g' <<< "$1"
+          }
+
+          pad_right() {
+            printf "%-30s" "$1"
+          }
+
+          NEEDS_JSON='${{ toJson(needs) }}'
+          TOPIC_STATUS="${{ needs.fetch-repo-topics.outputs.topic_status }}"
+
+          echo "Fetching job results..."
+          for job in $(jq -r 'keys[]' <<< "$NEEDS_JSON"); do
+            RESULT=$(jq -r ".\"$job\".result" <<< "$NEEDS_JSON")
+            JOB_NAME=$(prettify "$job")
+            PADDED_JOB_NAME=$(pad_right "$JOB_NAME")
+
+            if [[ "$job" == "copyright-check" ]]; then
+              COPYRIGHT_FAILED="${{ needs.copyright-check.outputs.copyright_failed }}"
+              echo "Copyright Check Output: $COPYRIGHT_FAILED"
+              if [[ "$COPYRIGHT_FAILED" == "true" ]]; then
+                if [[ "$TOPIC_STATUS" != "new" ]]; then
+                  OPTIONAL_FAILED_JOBS+="- ❌ $PADDED_JOB_NAME\n"
+                  continue
+                fi
+                RESULT="failure"
+              fi
+            elif [[ "$job" == "code-formatting-check" ]]; then
+              FORMATTING_FAILED="${{ needs.code-formatting-check.outputs.formatting_failed }}"
+              echo "Code Formatting Check Output: $FORMATTING_FAILED"
+              if [[ "$FORMATTING_FAILED" == "true" ]]; then
+                if [[ "$TOPIC_STATUS" != "new" ]]; then
+                  OPTIONAL_FAILED_JOBS+="- ❌ $PADDED_JOB_NAME\n"
+                  continue
+                fi
+                RESULT="failure"
+              fi
+            fi
+
+            if [[ "$RESULT" == "success" ]]; then
+              PASSED_JOBS+="- ✅ $PADDED_JOB_NAME\n"
+            elif [[ "$RESULT" == "failure" ]]; then
+              FAILED_JOBS+="- ❌ $PADDED_JOB_NAME\n"
+            else
+              SKIPPED_JOBS+="- ⚠️ $PADDED_JOB_NAME\n"
+            fi
+          done
+
+          if [[ -z "$FAILED_JOBS" && -z "$SKIPPED_JOBS" ]]; then
+            TITLE="✅ Pre-Deployment Verification: Success | Deployment Ready"
+            COLOR="2E8B57"
+          else
+            TITLE="❌ Pre-Deployment Verification: Failed | Deployment Blocked"
+            COLOR="B22222"
+          fi
+
+          FACTS="[ \
+            {\"name\":\"📋 Workflow:\", \"value\":\"${{ github.workflow }}\"}, \
+            {\"name\":\"🌿 Branch:\", \"value\":\"${{ github.ref_name }}\"}, \
+            {\"name\":\"🔗 Commit:\", \"value\":\"${{ github.sha }}\"}, \
+            {\"name\":\"👤 Initiated By:\", \"value\":\"${{ github.actor }}\"}, \
+            {\"name\":\"📌 Project Category:\", \"value\":\"$TOPIC_STATUS\"}"
+
+          [[ -n "$PASSED_JOBS" ]] && FACTS+=", {\"name\":\"✅ Passed Jobs\", \"value\":\"\"}, {\"name\":\"\", \"value\":\"$(echo -e "$PASSED_JOBS" | sed 's/"/\\"/g')\"}"
+          [[ -n "$FAILED_JOBS" ]] && FACTS+=", {\"name\":\"❌ Failed Jobs\", \"value\":\"\"}, {\"name\":\"\", \"value\":\"$(echo -e "$FAILED_JOBS" | sed 's/"/\\"/g')\"}"
+          [[ -n "$SKIPPED_JOBS" ]] && FACTS+=", {\"name\":\"⚠️ Skipped Jobs\", \"value\":\"\"}, {\"name\":\"\", \"value\":\"$(echo -e "$SKIPPED_JOBS" | sed 's/"/\\"/g')\"}"
+          [[ -n "$OPTIONAL_FAILED_JOBS" ]] && FACTS+=", {\"name\":\"❌ Failed (Optional)\", \"value\":\"\"}, {\"name\":\"\", \"value\":\"$(echo -e "$OPTIONAL_FAILED_JOBS" | sed 's/"/\\"/g')\"}"
+
+          FACTS+="]"
+
+          JSON_PAYLOAD=$(cat <<EOF
+          {
+            "@type": "MessageCard",
+            "@context": "https://schema.org/extensions",
+            "summary": "$TITLE",
+            "themeColor": "$COLOR",
+            "title": "$TITLE",
+            "sections": [
+              {
+                "activityTitle": "**Repository: ${{ github.repository }}**",
+                "facts": $FACTS
+              }
+            ]
+          }
+          EOF
+          )
+
+          curl -s -f -H 'Content-Type: application/json' \
+            -d "$JSON_PAYLOAD" \
+            "${{ env.TEAMS_WEBHOOK_URL }}"
+
+  deploy:
+    name: "Deploy Application"
+    runs-on: [self-hosted, linux]
+    needs:
+      - prepare-workspace
+      - artifact-processing
+    environment: dev-integration
+    env:
+      WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace-path }}
+    outputs:
+      context-path: ${{ steps.deploy-war.outputs.context-path }}
+  
+    steps:
+      - name: Set Tomcat Host Environment
+        run: |
+          echo "TOMCAT_HOST=${{ secrets.DEV_TOMCAT_HOST }}" >> $GITHUB_ENV
+          echo "SCRIPT_MANAGER_USER=${{ secrets.DEV_SCRIPT_MANAGER_USER }}" >> $GITHUB_ENV
+          echo "SCRIPT_MANAGER_PASSWORD=${{ secrets.DEV_SCRIPT_MANAGER_PASSWORD }}" >> $GITHUB_ENV
+  
+      - name: Deploy WAR via Tomcat Manager
+        working-directory: ${{ env.WORKSPACE }}
+        id: deploy-war
+        run: |
+          WAR_FILE=$(find target -name "*.war" | head -n 1)
+          if [ -z "$WAR_FILE" ]; then
+            echo "WAR file not found!"
+            exit 1
+          fi
+  
+          WAR_NAME=$(basename "$WAR_FILE")
+          CONTEXT_PATH="${WAR_NAME%.war}"
+  
+          echo "Deploying $WAR_NAME to Tomcat ($TOMCAT_HOST) at context path $CONTEXT_PATH..."
+          curl -v --noproxy "*" \
+            --fail \
+            --header "Expect:" \
+            --upload-file "$WAR_FILE" \
+            -u "$SCRIPT_MANAGER_USER:$SCRIPT_MANAGER_PASSWORD" \
+            "http://$TOMCAT_HOST:8080/manager/text/deploy?path=/$CONTEXT_PATH&update=true"
+  
+          echo "context-path=$CONTEXT_PATH" >> $GITHUB_OUTPUT
+
+  post-deployment-verify:
+    name: Post Deployment Verification
+    runs-on: [self-hosted, linux]
+    needs:
+      - deploy
+      - pre-deploy-notify
+    env:
+      CONTEXT_PATH: ${{ needs.deploy.outputs.context-path }}
+      TOMCAT_HOST: ${{ secrets.DEV_TOMCAT_HOST }}
+      SCRIPT_MANAGER_USER: ${{ secrets.DEV_SCRIPT_MANAGER_USER }}
+      SCRIPT_MANAGER_PASSWORD: ${{ secrets.DEV_SCRIPT_MANAGER_PASSWORD }}
+
+    steps:
+      - name: Verify Deployment Is Running
+        run: |
+          for attempt in {1..20}; do
+            echo "Attempt $attempt: Checking deployment status..."
+
+            STATUS=$(curl --noproxy "*" -s -u "$SCRIPT_MANAGER_USER:$SCRIPT_MANAGER_PASSWORD" \
+              "http://$TOMCAT_HOST:8080/manager/text/list")
+
+            if echo "$STATUS" | grep -qE "/$CONTEXT_PATH:running:[0-9]+:$CONTEXT_PATH"; then
+              echo "Deployment is running successfully."
+              exit 0
+            fi
+
+            echo "Application not running yet. Retrying in 10 seconds..."
+            sleep 10
+          done
+
+          echo "Deployment failed or checking timed out after 20 attempts."
+          exit 1
+
+  post-deploy-notify:
+      name: Notify After Deployment
+      runs-on: ubuntu-latest
+      needs:
+        - fetch-repo-topics
+        - post-deployment-verify
+      if: always()
+      env:
+        TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+
+      steps:
+        - name: Notify Deployment Completion
+          run: |
+            set -euo pipefail
+            TITLE="🎉 Deployment Completed Successfully!"
+            COLOR="2E8B57"
+            STATUS="✅ Success"
+            
+            if [[ "${{ needs.post-deployment-verify.result }}" != "success" ]]; then
+              TITLE="❌ Deployment Failed"
+              COLOR="B22222"
+              STATUS="🚨 Failed"
+            fi
+            
+            TOPIC_STATUS="${{ needs.fetch-repo-topics.outputs.topic_status }}"
+            
+            JSON_PAYLOAD=$(cat <<EOF
+            {
+              "@type": "MessageCard",
+              "@context": "https://schema.org/extensions",
+              "summary": "$TITLE",
+              "themeColor": "$COLOR",
+              "title": "$TITLE",
+              "sections": [
+                {
+                  "activityTitle": "**Repository: ${{ github.repository }}**",
+                  "facts": [
+                    {"name": "🚀 Deployment Status:", "value": "$STATUS"},
+                    {"name": "📋 Workflow:", "value": "${{ github.workflow }}"},
+                    {"name": "🌿 Branch:", "value": "${{ github.ref_name }}"},
+                    {"name": "🔗 Commit:", "value": "${{ github.sha }}"},
+                    {"name": "👤 Initiated By:", "value": "${{ github.actor }}"},
+                    {"name": "📌 Project Category:", "value": "$TOPIC_STATUS"}
+                  ]
+                }
+              ]
+            }
+            EOF
+            )
+            
+            curl -s -f -H 'Content-Type: application/json' \
+              -d "$JSON_PAYLOAD" \
+              "${{ env.TEAMS_WEBHOOK_URL }}"
+    
+  cleanup-workspace:
+    name: Cleanup Workspace
+    runs-on: [ self-hosted, linux ]
+    needs:
+      - prepare-workspace
+      - build-and-test
+      - sonarqube-quality-gate-check
+      - opensource-license-scan
+      - artifact-processing
+      - deploy
+      - post-deployment-verify
+    if: always()
+    env:
+      WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace-path }}
+
+    steps:
+      - name: Cleanup Workspace
+        run: |
+          echo "Cleaning up workspace..."
+          rm -rf "${{ env.WORKSPACE }}"

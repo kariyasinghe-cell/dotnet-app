@@ -162,27 +162,26 @@ jobs:
       WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace-path }}
 
     steps:
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
         with:
-          java-version: '17'
-          distribution: 'adopt'
+          dotnet-version: '9.0.305'
 
-      - name: Verify Java Version
-        working-directory: ${{ env.WORKSPACE }}
+      - name: Verify dotnet Version
+        working-directory: ${{ github.WORKSPACE }}
         run: |
-          java -version
+          dotnet --version
 
       - name: Build, Test and Generate Coverage
         working-directory: ${{ env.WORKSPACE }}
+        env:
+          http_proxy: http://192.168.5.60:8080
+          https_proxy: http://192.168.5.60:8080
         run: |
-          mvn -B clean verify \
-            -Dmaven.war.skip=true \
-            -Dspring-boot.repackage.skip=true \
-            -Dhttp.proxyHost=192.168.5.60 \
-            -Dhttp.proxyPort=8080 \
-            -Dhttps.proxyHost=192.168.5.60 \
-            -Dhttps.proxyPort=8080
+          dotnet clean
+          dotnet restore --no-cache
+          dotnet build --no-restore --configuration Release
+          dotnet test --no-build --configuration Release --collect:"XPlat Code Coverage"
 
   sonarqube-quality-gate-check:
     name: SonarQube Quality Check
@@ -199,38 +198,90 @@ jobs:
       needs.code-formatting-check.outputs.formatting_failed == 'false') }}
 
     env:
-        WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace-path }}
+      WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace }}
+    
     steps:
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
         with:
-          java-version: '17'
-          distribution: 'adopt'
-      - name: Verify Java Version for Sonar
-        working-directory: ${{ env.WORKSPACE }}
+          dotnet-version: '9.0.305'
+
+      - name: Verify .NET Version
+        shell: pwsh
         run: |
-          java -version
-  
-      - name: SonarQube Scan - Quality Gate Check
-        working-directory: ${{ env.WORKSPACE }}
-        run: |  
-          REPO_NAME=$(basename $GITHUB_REPOSITORY)
-          SONAR_PROJECT_KEY="$REPO_NAME"
-          echo "Using Sonar project key: $SONAR_PROJECT_KEY"
-  
-          mvn sonar:sonar -X \
-            -Dsonar.host.url=http://192.168.129.211:9999 \
-            -Dsonar.token=${{ secrets.SONAR_QUBE_TOKEN }} \
-            -Dhttp.proxyHost=192.168.5.60 -Dhttp.proxyPort=8080 \
-            -Dhttps.proxyHost=192.168.5.60 -Dhttps.proxyPort=8080 \
-            -Dhttp.nonProxyHosts="localhost|127.0.0.1|192.168.129.211" \
-            -Dhttps.nonProxyHosts="localhost|127.0.0.1|192.168.129.211" \
-            -Dsonar.projectKey=$SONAR_PROJECT_KEY \
-            -Dsonar.projectName=$SONAR_PROJECT_KEY \
-            -Dsonar.projectVersion=${{ github.sha }} \
-            -Dsonar.scm.provider=git \
-            -Dsonar.scm.forceReloadAll=true \
-            -Dsonar.qualitygate.wait=true
+          Set-Location $env:WORKSPACE
+          Write-Host ".NET version for build"
+          dotnet --info
+
+      - name: Restore Dependencies
+        shell: pwsh
+        run: |
+          Set-Location $env:WORKSPACE
+          dotnet restore
+
+      - name: Install Tool dotnet-coverage
+        shell: pwsh
+        run: |
+          if (-not (dotnet tool list -g | Select-String -Pattern "dotnet-coverage")) {
+            Write-Host "dotnet-coverage tool not found. Installing..."
+            dotnet tool install --global dotnet-coverage
+          } else {
+            Write-Host "dotnet-coverage tool is already installed."
+          }
+
+      - name: Verify dotnet-coverage Tool Installation
+        shell: pwsh
+        run: |
+          dotnet tool list -g
+          dotnet-coverage --version
+
+      - name: Install Tool dotnet-sonarscanner
+        shell: pwsh
+        run: |
+          if (-not (Get-Command dotnet-sonarscanner -ErrorAction SilentlyContinue)) {
+            Write-Host "dotnet-sonarscanner not found, installing..."
+            dotnet tool install --global dotnet-sonarscanner
+          } else {
+            Write-Host "dotnet-sonarscanner tool is already installed."
+          }
+
+      - name: Verify dotnet-sonarscanner Installation
+        shell: pwsh
+        run: |
+          dotnet tool list --global
+          Write-Host "Global tools path: $(dotnet --list-sdks)"
+          Write-Host "PATH: $env:PATH"
+
+      - name: Run SonarQube Analysis
+        shell: pwsh
+        env:
+          PATH: $env:PATH;C:\Users\runneradmin\.dotnet\tools;C:\Program Files\dotnet;
+          http_proxy: "http://192.168.5.60:8080"
+          https_proxy: "http://192.168.5.60:8080"
+          no_proxy: "localhost,127.0.0.1,192.168.129.211"
+        run: |
+          Set-Location $env:WORKSPACE
+          $repositoryName = ($env:GITHUB_REPOSITORY -split '/')[1]
+          $env:SONAR_PROJECT_KEY = $repositoryName
+          Write-Host "Sonar Project Key is: $env:SONAR_PROJECT_KEY"
+
+          dotnet-sonarscanner begin `
+            /d:sonar.host.url="http://192.168.129.211:9999" `
+            /d:sonar.login="${{ secrets.SONAR_QUBE_TOKEN }}" `
+            /k:$env:SONAR_PROJECT_KEY `
+            /n:$env:SONAR_PROJECT_KEY `
+            /d:sonar.verbose=true `
+            /d:sonar.scm.provider=git `
+            /v:$env:GITHUB_SHA `
+            /d:sonar.scm.forceReloadAll=true `
+            /d:sonar.dotnet.excludeTestProjects=true `
+            /d:sonar.cs.vscoveragexml.reportsPaths=coverage.xml
+
+          dotnet build /nodereuse:false --no-incremental
+          dotnet-coverage collect "dotnet test" -f xml -o "coverage.xml"
+
+          dotnet-sonarscanner end `
+            /d:sonar.login="${{ secrets.SONAR_QUBE_TOKEN }}"
 
   opensource-license-scan:
     name: Opensource License Scan
@@ -246,38 +297,36 @@ jobs:
       needs.copyright-check.outputs.copyright_failed == 'false' &&
       needs.code-formatting-check.outputs.formatting_failed == 'false') }}
     env:
-      WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace-path }}
-      
+      WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace }}
+
     steps:
-      - name: Prepare Dependency Metadata for License Scan
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore NuGet Dependencies
+        shell: pwsh
         working-directory: ${{ env.WORKSPACE }}
         run: |
-          mvn dependency:copy-dependencies \
-            -DoutputDirectory=target/dependency-jars \
-            -Dhttp.proxyHost=192.168.5.60 \
-            -Dhttp.proxyPort=8080 \
-            -Dhttps.proxyHost=192.168.5.60 \
-            -Dhttps.proxyPort=8080
-      
-          mkdir -p target/flat-poms
-      
-          for jar in target/dependency-jars/*.jar; do
-            JAR_BASENAME=$(basename "$jar" .jar)
-            unzip -p "$jar" 'META-INF/maven/*/pom.xml' > "target/flat-poms/${JAR_BASENAME}.pom.xml" 2>/dev/null || true
-          done
+          dotnet restore --force
 
-          ls -l target/flat-poms
-          find target/flat-poms -name "*.pom.xml"
+      - name: Collect NuGet Package Metadata
+        shell: pwsh
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          # Generate dependency tree in JSON format
+          dotnet list package --include-transitive --format json > nuget-dependencies.json
+          Write-Host "NuGet dependency metadata written to nuget-dependencies.json"
 
-      - name: Open Source License Scanning - ScanCode
+      - name: Run ScanCode License Analysis
+        shell: bash
         working-directory: ${{ env.WORKSPACE }}
         run: |
           source "/home/sampath_admin/actions-runner/_work/scancode-toolkit-v32.3.3/venv/bin/activate"
           unset SCANCODE_DEBUG
           unset SCANCODE_DEBUG_STRICT
-      
+
           OUTPUT_JSON="scancode-results.json"
-      
+
           scancode "${{ env.WORKSPACE }}" \
             --license \
             --classify \
@@ -291,17 +340,18 @@ jobs:
             --filter-clues \
             --json-pp "$OUTPUT_JSON" \
             -v
-            
+
           echo "ScanCode results saved to $OUTPUT_JSON"
 
       - name: License Scan Result Processing
+        shell: bash
         working-directory: ${{ env.WORKSPACE }}
         run: |
-          jq '(.files[] | select(.path | startswith("target/flat-poms/") and endswith(".pom.xml"))).path |= (
-                 split("/") | last | sub("\\.pom\\.xml$"; ".jar")
-              )' scancode-results.json > scancode-results-processed.json
+          # Example: filter JSON for NuGet package names if needed
+          jq '.packages' scancode-results.json > scancode-results-processed.json
 
       - name: Upload Scan Artifacts
+        shell: pwsh
         env:
           SCANCODE_REPO: "sampathbankplc/scancode-scan-results"
           SCANCODE_REPO_BRANCH: main
@@ -309,27 +359,27 @@ jobs:
           REPO_NAME: ${{ github.repository }}
         working-directory: ${{ env.WORKSPACE }}
         run: |
-          REPO_NAME_ONLY=$(echo "$REPO_NAME" | cut -d'/' -f2)
-          FILENAME="${REPO_NAME_ONLY}.json"
-      
-          git clone --branch $SCANCODE_REPO_BRANCH https://x-access-token:$GITHUB_TOKEN@github.com/$SCANCODE_REPO.git results-repo
-      
-          cp "scancode-results-processed.json" "results-repo/$FILENAME"
-      
-          mkdir -p results-repo/original
-          cp "scancode-results.json" "results-repo/original/$FILENAME"
-      
-          cd results-repo
+          $repoNameOnly = ($env:REPO_NAME -split '/')[1]
+          $fileName = "$repoNameOnly.json"
+
+          git clone --branch $env:SCANCODE_REPO_BRANCH https://x-access-token:$env:GITHUB_TOKEN@github.com/$env:SCANCODE_REPO.git results-repo
+
+          Copy-Item "scancode-results-processed.json" "results-repo/$fileName" -Force
+
+          mkdir results-repo/original -Force
+          Copy-Item "scancode-results.json" "results-repo/original/$fileName" -Force
+
+          Set-Location results-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$FILENAME"
-          git add "original/$FILENAME"
-          git commit -m "Updated $REPO_NAME_ONLY" || echo "No changes to commit"
-          git push origin "$SCANCODE_REPO_BRANCH"
+          git add "$fileName"
+          git add "original/$fileName"
+          git commit -m "Updated $repoNameOnly" || Write-Host "No changes to commit"
+          git push origin "$env:SCANCODE_REPO_BRANCH"
 
   artifact-processing:
     name: "Artifact Packaging"
-    runs-on: windows-latest
+    runs-on: [ self-hosted, linux ]
     needs:
       - prepare-workspace
       - sonarqube-quality-gate-check

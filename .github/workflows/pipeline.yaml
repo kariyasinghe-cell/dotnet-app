@@ -139,11 +139,13 @@ jobs:
     steps:
       - name: Define Workspace
         id: define_workspace
-        run: |
-          New-Item -ItemType Directory -Force -Path "$env:WORKSPACE" | Out-Null
-          echo "workspace=$env:WORKSPACE" >> $env:GITHUB_OUTPUT
-          echo "WORKSPACE=$env:WORKSPACE" >> $env:GITHUB_ENV
         shell: pwsh
+        run: |
+          $WORKSPACE = Join-Path $env:GITHUB_WORKSPACE "$env:GITHUB_RUN_ID-ci"
+          New-Item -ItemType Directory -Force -Path $WORKSPACE | Out-Null
+          "workspace=$WORKSPACE" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "WORKSPACE=$WORKSPACE" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
 
       - name: Checkout Code
         uses: actions/checkout@v4

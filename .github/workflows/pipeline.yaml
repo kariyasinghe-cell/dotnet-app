@@ -132,7 +132,7 @@ jobs:
 
   prepare-workspace:
     name: Prepare Build Workspace
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     outputs:
       workspace-path: ${{ steps.define_workspace.outputs.workspace }}
 
@@ -154,7 +154,7 @@ jobs:
 
   build-and-test:
     name: Build and Test
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     needs: prepare-workspace
     env:
       WORKSPACE: ${{ needs.prepare-workspace.outputs.workspace-path }}
@@ -184,7 +184,7 @@ jobs:
 
   sonarqube-quality-gate-check:
     name: SonarQube Quality Check
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     needs:
       - fetch-repo-topics
       - prepare-workspace
@@ -232,7 +232,7 @@ jobs:
 
   opensource-license-scan:
     name: Opensource License Scan
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     needs:
       - fetch-repo-topics
       - prepare-workspace
@@ -327,7 +327,7 @@ jobs:
 
   artifact-processing:
     name: "Artifact Packaging"
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     needs:
       - prepare-workspace
       - sonarqube-quality-gate-check
@@ -470,7 +470,7 @@ jobs:
 
   deploy:
     name: "Deploy Application"
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     needs:
       - prepare-workspace
       - artifact-processing
@@ -512,7 +512,7 @@ jobs:
 
   post-deployment-verify:
     name: Post Deployment Verification
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     needs:
       - deploy
       - pre-deploy-notify
@@ -599,7 +599,7 @@ jobs:
     
   cleanup-workspace:
     name: Cleanup Workspace
-    runs-on: [self-hosted, windows]
+    runs-on: windows-latest
     needs:
       - prepare-workspace
       - build-and-test
@@ -617,4 +617,3 @@ jobs:
         run: |
           echo "Cleaning up workspace..."
           rm -rf "${{ env.WORKSPACE }}"
-
